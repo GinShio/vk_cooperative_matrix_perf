@@ -132,6 +132,7 @@ struct TestCase
     uint32_t TILE_N;
     uint32_t TILE_K;
 
+    bool AColMajor;
     bool BColMajor;
     uint32_t ARowLen;
     uint32_t ANumRows;
@@ -606,6 +607,27 @@ int main(int argc, char *argv[])
     result = pfn_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(physicalDevice, &numCooperativeMatrixProperties, &cooperativeMatrixProperties[0]);
     CHECK_RESULT(result);
 
+    if (bfloat16Supported) {
+        // Specification allows only support one of bfloat16 dot and coopmat, need to check if vendor really support bfloat16 coopmat.
+        VkPhysicalDeviceShaderBfloat16FeaturesKHR bfloat16Features = {};
+        bfloat16Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_BFLOAT16_FEATURES_KHR;
+
+        VkPhysicalDeviceFeatures2 physicalFeatures2 = {};
+        physicalFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        physicalFeatures2.pNext = &bfloat16Features;
+
+        PFN_vkGetPhysicalDeviceFeatures2 pfn_vkGetPhysicalDeviceFeatures2 =
+            (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2");
+
+        pfn_vkGetPhysicalDeviceFeatures2(physicalDevices[physicalDeviceIndex], &physicalFeatures2);
+
+        // Logic if feature is not supported
+        if (bfloat16Features.shaderBFloat16CooperativeMatrix == VK_FALSE) {
+            printf("%s supported, but BFloat16CooperativeMatrixKHR not supported\n", VK_KHR_SHADER_BFLOAT16_EXTENSION_NAME);
+            bfloat16Supported = false;
+        }
+    }
+
     uint32_t numCooperativeMatrixFlexibleDimensionsProperties = 0;
     vector<VkCooperativeMatrixFlexibleDimensionsPropertiesNV> cooperativeMatrixFlexibleDimensionsProperties;
 
@@ -968,6 +990,7 @@ int main(int argc, char *argv[])
         for (unsigned int TILE_M_size = params->granularityTILE_M; TILE_M_size <= params->maxTILE_M; TILE_M_size += params->granularityTILE_M) {
         double maxPerfThisIter = 0;
         for (unsigned int TILE_N_size = params->granularityTILE_N; TILE_N_size <= params->maxTILE_N; TILE_N_size += params->granularityTILE_N) {
+        for (unsigned int acolmajor = 0; acolmajor <= 1; ++acolmajor) {
         for (unsigned int bcolmajor = 0; bcolmajor <= 1; ++bcolmajor) {
         for (unsigned int TILE_K = 16; TILE_K <= 64; TILE_K *= 2) {
         for (unsigned int workgroupSize = 32; workgroupSize <= 256; workgroupSize *= 2) {
@@ -979,7 +1002,14 @@ int main(int argc, char *argv[])
                 continue;
             }
 
+            bool AColMajor = acolmajor != 0;
             bool BColMajor = bcolmajor != 0;
+
+            // A matrix must be wide enough to load via uvec4 addressing from shared memory
+            if (!AColMajor && tt == TT_SHARED &&
+                componentTypeInfo[AType].bits / 8 * MSize < 16) {
+                continue;
+            }
 
             // B matrix must be wide enough to load via uvec4 addressing from shared memory
             if (!BColMajor && tt == TT_SHARED &&
@@ -1007,6 +1037,7 @@ int main(int argc, char *argv[])
                 TILE_N_size, // uint32_t TILE_N;
                 TILE_K, // uint32_t TILE_K;
 
+                AColMajor, // bool AColMajor;
                 BColMajor, // bool BColMajor;
             };
             float alpha = 2.0f, beta = 3.0f;
@@ -1063,8 +1094,8 @@ int main(int argc, char *argv[])
             testCase.N = (testCase.N + testCase.TILE_N - 1) / testCase.TILE_N * testCase.TILE_N;
             testCase.K = (testCase.K + testCase.TILE_K - 1) / testCase.TILE_K * testCase.TILE_K;
 
-            testCase.ARowLen = testCase.TILE_K;
-            testCase.ANumRows = testCase.TILE_M;
+            testCase.ARowLen = AColMajor ? testCase.TILE_M : testCase.TILE_K;
+            testCase.ANumRows = AColMajor ? testCase.TILE_K : testCase.TILE_M;
             testCase.BRowLen = BColMajor ? testCase.TILE_K : testCase.TILE_N;
             testCase.BNumRows = BColMajor ? testCase.TILE_N : testCase.TILE_K;
 
@@ -1197,6 +1228,7 @@ int main(int argc, char *argv[])
                 testCase.N, // stride3
                 *(uint32_t *)&alpha,
                 *(uint32_t *)&beta,
+                testCase.AColMajor,
                 testCase.BColMajor,
                 testCase.ARowLen,
                 testCase.ANumRows,
@@ -1235,6 +1267,7 @@ int main(int argc, char *argv[])
                 {18, sizeof(uint32_t) * 18, sizeof(uint32_t)},
                 {19, sizeof(uint32_t) * 19, sizeof(uint32_t)},
                 {20, sizeof(uint32_t) * 20, sizeof(uint32_t)},
+                {21, sizeof(uint32_t) * 21, sizeof(uint32_t)},
             };
 
             VkSpecializationInfo specInfo =
@@ -1355,7 +1388,7 @@ int main(int argc, char *argv[])
             uint64_t flops = 2ULL * (uint64_t)testCase.M * (uint64_t)testCase.N * (uint64_t)testCase.K * (uint64_t)repeatCount;
             double tflops = (double)flops / (double)(elapsedUs / 1000000.0) / (1000.0*1000.0*1000.0*1000.0);
 
-            printf("TILE_M=%d TILE_N=%d, TILE_K=%d BColMajor=%d workgroupSize=%d ", testCase.TILE_M, testCase.TILE_N, testCase.TILE_K, testCase.BColMajor, workgroupSize);
+            printf("TILE_M=%d TILE_N=%d, TILE_K=%d AColMajor=%d BColMajor=%d workgroupSize=%d ", testCase.TILE_M, testCase.TILE_N, testCase.TILE_K, testCase.AColMajor, testCase.BColMajor, workgroupSize);
             if (!correctness) {
                 printf("  %f TFlops\n", tflops);
             }
@@ -1448,6 +1481,7 @@ int main(int argc, char *argv[])
         } // workgroupSize
         } // TILE_K
         } // bcolmajor
+        } // acolmajor
         } // TILE_N_size
         } // TILE_M_size
 

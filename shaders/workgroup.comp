@@ -45,15 +45,16 @@ layout(constant_id = 9) const uint strideC = 1;
 layout(constant_id = 10)const uint strideD = 1;
 layout(constant_id = 11)const float alpha = 1.0;
 layout(constant_id = 12)const float beta = 1.0;
-layout(constant_id = 13)const bool BColMajor = false;
+layout(constant_id = 13)const bool AColMajor = false;
+layout(constant_id = 14)const bool BColMajor = false;
 // Size and number of rows in A matrix. equal to TILE_K,TILE_M (always row major)
-layout(constant_id = 14)const uint A_ROW_LEN = 1;
-layout(constant_id = 15)const uint A_NUM_ROWS = 1;
+layout(constant_id = 15)const uint A_ROW_LEN = 1;
+layout(constant_id = 16)const uint A_NUM_ROWS = 1;
 // Size and number of rows in B matrix. equal to TILE_N,TILE_K for row major and TILE_K,TILE_N for col major
-layout(constant_id = 16)const uint B_ROW_LEN = 1;
-layout(constant_id = 17)const uint B_NUM_ROWS = 1;
-layout(constant_id = 19) const uint M = 1;
-layout(constant_id = 20) const uint N = 1;
+layout(constant_id = 17)const uint B_ROW_LEN = 1;
+layout(constant_id = 18)const uint B_NUM_ROWS = 1;
+layout(constant_id = 20) const uint M = 1;
+layout(constant_id = 21) const uint N = 1;
 
 const int LayoutB = BColMajor ? gl_CooperativeMatrixLayoutColumnMajor : gl_CooperativeMatrixLayoutRowMajor;
 
